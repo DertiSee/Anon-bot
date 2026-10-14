@@ -1,0 +1,77 @@
+import asyncio
+import uuid
+import os
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+# === НАСТРОЙКИ ===
+BOT_TOKEN = os.getenv("8514242269:AAH3TuOyzbKDYxnOvAjhOD67t1xoTiQKLzc")
+ADMIN_ID = 1351338085
+CHANNEL_ID = -1004391421150
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+pending = {}
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    if message.chat.type == "private":
+        await message.answer("Привет! Отправь мне своё анонимное признание, и я передам его на модерацию.")
+
+@dp.message(F.chat.type == "private")
+async def handle_private(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("Вы админ.")
+        return
+    if not message.text:
+        await message.answer("Пожалуйста, отправьте текстовое сообщение.")
+        return
+
+    unique_id = str(uuid.uuid4())
+    pending[unique_id] = {"user_id": message.from_user.id, "text": message.text}
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"approve:{unique_id}"),
+            InlineKeyboardButton(text="❌ Отказать", callback_data=f"reject:{unique_id}")
+        ]
+    ])
+
+    await bot.send_message(chat_id=ADMIN_ID, text=f"Новое анонимное сообщение:\n\n{message.text}", reply_markup=kb)
+    await message.answer("Ваше сообщение отправлено на модерацию. Спасибо!")
+
+@dp.callback_query(F.data.startswith("approve:"))
+async def approve(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+    unique_id = callback.data.split(":")[1]
+    data = pending.pop(unique_id, None)
+    if not data:
+        await callback.message.edit_text("Уже обработано.")
+        await callback.answer()
+        return
+    await bot.send_message(chat_id=CHANNEL_ID, text=data["text"])
+    await callback.message.edit_text(f"✅ Опубликовано:\n\n{data['text']}")
+    await callback.answer("Опубликовано")
+
+@dp.callback_query(F.data.startswith("reject:"))
+async def reject(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Нет прав.", show_alert=True)
+        return
+    unique_id = callback.data.split(":")[1]
+    data = pending.pop(unique_id, None)
+    if not data:
+        await callback.message.edit_text("Уже обработано.")
+        await callback.answer()
+        return
+    await callback.message.edit_text(f"❌ Отклонено:\n\n{data['text']}")
+    await callback.answer("Отклонено")
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
